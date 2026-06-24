@@ -1,0 +1,279 @@
+{
+  "@context": "https://etzhayyim.com/ns/actor/v1",
+  "@id": "did:web:oil-trading.etzhayyim.com",
+  "actors": [
+    {
+      "description": "Spot and term cargo trade coverage.",
+      "displayName": "Physical Trades",
+      "path": "book:physical-trade"
+    },
+    {
+      "description": "Producer-to-buyer offtake contract coverage.",
+      "displayName": "Offtake Contracts",
+      "path": "book:offtake"
+    },
+    {
+      "description": "Brent, WTI and Dubai pricing basis coverage.",
+      "displayName": "Benchmark Linkage",
+      "path": "pricing:benchmark"
+    },
+    {
+      "description": "Trader and buyer concentration coverage.",
+      "displayName": "Counterparty Risk",
+      "path": "risk:counterparty"
+    }
+  ],
+  "capabilities": [
+    "graph.query",
+    "graph.write",
+    "agent.chat",
+    "agent.invoke",
+    "derive:social"
+  ],
+  "complianceDocs": [
+    "90-docs/rules/compliance/per-did-kyumei-shinka-autonomy.md",
+    "90-docs/platform/260403-live-data-kyumei-shinka-consolidated.md"
+  ],
+  "convoSystemPrompt": "You are the Oil Trading agent. Track physical oil trades, benchmark linkage, counterparties and offtake contracts. Explain how pricing basis, counterparty concentration and logistics constraints move barrels between regions.",
+  "description": "Physical crude and products trading, benchmark linkage, offtake contracts, arbitrage windows and counterparty concentration.",
+  "displayName": "Oil Trading & Benchmark Intelligence",
+  "domainKnowledgeRequired": true,
+  "runtime": "k8s-langserver",
+  "edge": "sveltekit-proxy",
+  "legacyExecutionTier": "T1",
+  "governance": {
+    "classification": "internal",
+    "complianceFrameworks": [
+      "OFAC Sanctions",
+      "EMIR",
+      "MiFID II"
+    ],
+    "raci": "responsible"
+  },
+  "heartbeatRequired": true,
+  "name": "oil-trading",
+  "nanoid": "01ltrad3",
+  "performerType": "service",
+  "pipelines": [
+    {
+      "steps": [
+        {
+          "args": {
+            "sql": "MATCH (t:OilTrade) RETURN t.country_code AS country, count(t) AS count, sum(t.volume) AS volume ORDER BY volume DESC LIMIT 20"
+          },
+          "fn": "graph.query",
+          "id": "tradeStats"
+        },
+        {
+          "args": {
+            "sql": "MATCH (t:OilTrade)-[:pricedAgainst]->(b:PricingBenchmark) RETURN b.benchmark_code AS benchmark, count(t) AS count LIMIT 20"
+          },
+          "depends_on": [],
+          "fn": "graph.query",
+          "id": "benchmarkStats"
+        },
+        {
+          "args": {
+            "sql": "MATCH (c:OfftakeContract) RETURN c.country_code AS country, count(c) AS contracts, sum(c.volume) AS volume LIMIT 20"
+          },
+          "depends_on": [],
+          "fn": "graph.query",
+          "id": "counterpartyStats"
+        },
+        {
+          "args": {
+            "message": "Oil trading report.\n\nTrade stats:\n$tradeStats.rows\n\nBenchmark stats:\n$benchmarkStats.rows\n\nCounterparty stats:\n$counterpartyStats.rows\n\nSummarize pricing basis concentration, counterparty exposure and the largest open arbitrage corridors."
+          },
+          "depends_on": [
+            "tradeStats",
+            "benchmarkStats",
+            "counterpartyStats"
+          ],
+          "fn": "agent.chat",
+          "id": "analyze"
+        },
+        {
+          "args": {
+            "template": "Oil trading report: $analyze.text"
+          },
+          "fn": "derive:social",
+          "id": "announce"
+        }
+      ],
+      "trigger": {
+        "cron": "0 */8 * * *",
+        "type": "cron"
+      }
+    },
+    {
+      "steps": [
+        {
+          "args": {
+            "sql": "MATCH (t:OilTrade) WHERE t.grade_code = $input.record.gradeCode RETURN t.trade_id AS tradeId, t.price_basis AS priceBasis, t.volume AS volume LIMIT 20"
+          },
+          "fn": "graph.query",
+          "id": "matchTrades"
+        }
+      ],
+      "trigger": {
+        "collections": [
+          "com.etzhayyim.apps.oilShipping.cargo"
+        ],
+        "type": "subscribeRepos"
+      }
+    },
+    {
+      "steps": [
+        {
+          "args": {
+            "sql": "MATCH (t:OilTrade {trade_id: $input.tradeId}) RETURN t.vertex_id, t.repo, t.collection, t.status LIMIT 1"
+          },
+          "fn": "graph.query",
+          "id": "trade"
+        }
+      ],
+      "trigger": {
+        "nsid": "com.etzhayyim.apps.oilTrading.book.getTrade",
+        "type": "xrpc"
+      }
+    },
+    {
+      "steps": [
+        {
+          "args": {
+            "sql": "MATCH (t:OilTrade) RETURN t.vertex_id, t.repo, t.collection, t.status LIMIT 50"
+          },
+          "fn": "graph.query",
+          "id": "trades"
+        }
+      ],
+      "trigger": {
+        "nsid": "com.etzhayyim.apps.oilTrading.book.listTrades",
+        "type": "xrpc"
+      }
+    },
+    {
+      "steps": [
+        {
+          "args": {
+            "sql": "MATCH (c:OfftakeContract) RETURN c.vertex_id, c.repo, c.collection, c.status LIMIT 50"
+          },
+          "fn": "graph.query",
+          "id": "contracts"
+        }
+      ],
+      "trigger": {
+        "nsid": "com.etzhayyim.apps.oilTrading.book.listOfftakes",
+        "type": "xrpc"
+      }
+    },
+    {
+      "steps": [
+        {
+          "args": {
+            "sql": "MATCH (t:OilTrade)-[:pricedAgainst]->(b:PricingBenchmark {benchmark_code: $input.benchmarkCode}) RETURN t.trade_id AS tradeId, t.volume AS volume, t.country_code AS country LIMIT 50"
+          },
+          "fn": "graph.query",
+          "id": "exposure"
+        }
+      ],
+      "trigger": {
+        "nsid": "com.etzhayyim.apps.oilTrading.analytics.getBenchmarkExposure",
+        "type": "xrpc"
+      }
+    },
+    {
+      "steps": [
+        {
+          "args": {
+            "sql": "MATCH (t:OilTrade) RETURN count(t) AS trades LIMIT 1"
+          },
+          "fn": "graph.query",
+          "id": "stats"
+        }
+      ],
+      "trigger": {
+        "nsid": "com.etzhayyim.apps.oilTrading.health",
+        "type": "xrpc"
+      }
+    },
+    {
+      "steps": [
+        {
+          "args": {
+            "sql": "MATCH (n) WHERE n.repo = $did RETURN count(n) AS nodeCount, coalesce(max(n._seq), 0) AS latestSeq LIMIT 1"
+          },
+          "fn": "graph.query",
+          "id": "coverageNodes"
+        },
+        {
+          "args": {
+            "sql": "MATCH (n) WHERE n.repo = $did AND n.collection IS NOT NULL RETURN n.collection AS collection, count(n) AS cnt ORDER BY cnt DESC LIMIT 10"
+          },
+          "depends_on": [],
+          "fn": "graph.query",
+          "id": "coverageCollections"
+        },
+        {
+          "args": {
+            "params": {
+              "actorName": "oil-trading",
+              "bucket": "6h",
+              "collection": "com.etzhayyim.apps.oilTrading.coverageSnapshot",
+              "latestSeq": 0,
+              "nanoid": "01ltrad3",
+              "nodeCount": "$coverageNodes.rows[0].nodeCount"
+            },
+            "template": "MERGE (c:ActorCoverageSnapshot {actorDid: $did, bucket: $bucket, actorName: $actorName, nanoid: $nanoid, nodeCount: $nodeCount, latestTs: $latestTs, repo: $did, collection: $collection, status: 'active'})"
+          },
+          "depends_on": [
+            "coverageNodes"
+          ],
+          "fn": "graph.write",
+          "id": "coverageSnapshot"
+        }
+      ],
+      "trigger": {
+        "cron": "0 */6 * * *",
+        "type": "cron"
+      }
+    }
+  ],
+  "profile": {
+    "agentType": "autonomous",
+    "capabilities": [
+      "trade-registry",
+      "benchmark-linkage",
+      "counterparty-mapping",
+      "arbitrage-analysis",
+      "offtake-monitoring"
+    ],
+    "description": "Tracks trader books, physical cargo deals, benchmark exposure and offtake structures across key hubs.",
+    "displayName": "Oil Trading & Benchmark Intelligence",
+    "isBot": true,
+    "operator": "etzhayyim.co.jp"
+  },
+  "requiredCollections": [
+    "com.etzhayyim.apps.standard.shinkaEvolution",
+    "com.etzhayyim.apps.standard.shinkaKnowledge"
+  ],
+  "requiredLoops": [
+    "shinka",
+    "koji",
+    "kyumei",
+    "domain-knowledge"
+  ],
+  "standardRule": "per-did-kyumei-shinka-autonomy@2026-04-13",
+  "standardStatus": "required",
+  "triggers": {
+    "subscribeRepos": {
+      "collections": [
+        "com.etzhayyim.apps.oilTrading.trade",
+        "com.etzhayyim.apps.oilTrading.offtakeContract",
+        "com.etzhayyim.apps.oilShipping.cargo",
+        "com.etzhayyim.apps.oilRefining.refinery"
+      ]
+    }
+  },
+  "uiType": "yoro"
+}
