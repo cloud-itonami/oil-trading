@@ -135,3 +135,29 @@
             (str k " is externally reachable and must require every gate"))
         (is (= :blocked (:status (m/cell-plan k {})))
             (str k " must refuse to serve an unattested request"))))))
+
+(deftest hazard-the-served-did-document-does-not-claim-the-did-this-actor-stamps
+  ;; NOT a guarantee -- a recorded divergence.
+  ;;
+  ;; `.well-known/did.json` identifies itself as
+  ;;   did:web:etzhayyim.com:actor:oil-trading
+  ;; (commit f072718, "migrate did:web to etzhayyim.com scheme",
+  ;;  ADR-2606231200 addendum 2026-07-02), while the planner and the manifest
+  ;; both stamp
+  ;;   did:web:oil-trading.etzhayyim.com
+  ;; and the document does not list that DID in alsoKnownAs either -- only the
+  ;; `at://` handle built from the same host. A DID document whose `id` is not
+  ;; the DID being resolved is not a resolution of that DID, so nothing can
+  ;; verify the identity these records are written under from what this repo
+  ;; serves. The sibling business-person repo carries the identical split from
+  ;; the identical commit, so this is the migration's shape, not a typo.
+  ;;
+  ;; Which side moves is an ownership decision, not this suite's. Pinned so
+  ;; that whichever side moves, this test goes red and the other side has to
+  ;; move with it. When they agree, delete this test and assert the equality.
+  (is (= "did:web:etzhayyim.com:actor:oil-trading" (get did-doc "id"))
+      "the served DID document changed -- reconcile it with m/actor-did and delete this test")
+  (is (not= m/actor-did (get did-doc "id"))
+      "the divergence is resolved -- replace this test with an equality assertion")
+  (is (not (some #{m/actor-did} (get did-doc "alsoKnownAs")))
+      "the document now acknowledges the stamped DID -- tighten this test"))

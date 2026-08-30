@@ -23,9 +23,9 @@
 (def min-tests
   "Below this many tests, the run did not measure the suite it claims to.
   Set under the current count with room to edit, not at it."
-  25)
+  30)
 
-(def min-assertions 250)
+(def min-assertions 300)
 
 (def green-marker "oil-trading: all green")
 

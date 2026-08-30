@@ -72,6 +72,16 @@
 ;; ── how an attestation may be presented ─────────────────────────────────────
 
 (deftest gate-value-reads-all-four-attestation-shapes
+  ;; All four shapes are accepted, but not by four branches. `gate-value` ends
+  ;; with two `(when (set? attestations) ...)` clauses that are unreachable:
+  ;; `get` already answers for sets, so clause 1 resolves a keyword set and
+  ;; clause 2 resolves a string set before either is reached. Measured
+  ;; 2026-08-31 by deleting the last clause -- the suite stayed green -- and
+  ;; then by deleting each of the first two, which both turn it red.
+  ;;
+  ;; Recorded rather than removed: whether the dead clauses come out is a
+  ;; change to the boundary, not to its tests. Do not register a mutation
+  ;; against them; it will report this suite as blind when the code is dead.
   (let [g :did-primary-baseline]
     (is (= 1 (m/gate-value {g 1} g))            "keyword-keyed map")
     (is (= 1 (m/gate-value {(name g) 1} g))     "string-keyed map")
@@ -206,11 +216,98 @@
     (is (= (count names) (count (set names)))
         "two cells sharing a legacy name would make the migration ambiguous")))
 
-(deftest the-gate-set-is-not-empty
-  (is (seq m/common-gates)
-      "an empty gate list would make every plan ready without any attestation")
-  (is (= (count m/common-gates) (count (set m/common-gates)))
-      "a duplicated gate would let one attestation cover two slots"))
+(deftest the-planner-still-has-something-to-plan
+  ;; The evidence floor. Every other test in this file measures the gate set
+  ;; against itself -- `doseq` over `common-gates`, `= (vec common-gates)
+  ;; (:missing-gates p)` -- so dropping a gate shrinks the requirement and the
+  ;; expectation together and the suite stays green while the gate widens.
+  ;; Measured on the sibling business-person repo, where exactly that mutation
+  ;; had to be caught by a literal count rather than by any set equality.
+  (is (= 7 (count m/common-gates))
+      "common-gates is the whole baseline; a shrunken one silently widens the gate")
+  (is (= [:council-charter-attestation
+          :no-platform-held-key-baseline
+          :no-probing-baseline
+          :murakumo-only-inference-baseline
+          :did-primary-baseline
+          :append-only-gate-baseline
+          :kotoba-only-substrate-baseline]
+         (vec m/common-gates))
+      "pinned by name as well as by count, so a substitution is caught too")
+  (is (apply distinct? m/common-gates)
+      "a duplicated gate makes the required set smaller than its count suggests")
+  (is (= 15 (count m/cell-specs))
+      "15 cells, or every doseq above iterates over fewer than it claims"))
+
+;; -- hazards -----------------------------------------------------------------
+;;
+;; The three tests below pin DEFECTS, not guarantees. Each says, in its own
+;; assertion messages, what to do when it goes red: the defect has been
+;; repaired, so delete the test and the mutation that guards it. They exist so
+;; that a repair cannot land silently, and so that the hazard cannot be
+;; rediscovered from scratch a third time.
+
+(deftest hazard-safe-rkey-collapses-distinct-identifiers-onto-one-key
+  ;; NOT a guarantee. Every character outside [A-Za-z0-9._~-] becomes "-", and
+  ;; `str/blank?` is checked AFTER that substitution, so it never fires for a
+  ;; non-empty input. Any two identifiers of equal length made only of
+  ;; punctuation or non-ASCII produce the SAME rkey -- and put-record on an
+  ;; existing rkey overwrites. Counterparty and vessel names reach this actor
+  ;; from the manifest's oilShipping subscription, so the collision is
+  ;; reachable rather than theoretical.
+  ;;
+  ;; Fix direction (not taken here -- it changes stored keys): fold to a
+  ;; content hash, or percent-encode rather than collapse.
+  (is (= (m/safe-rkey "日本語") (m/safe-rkey "%%%"))
+      "collapse fixed -- delete this test and the mutation that guards it")
+  (is (= "---" (m/safe-rkey "日本語"))
+      "collapse fixed -- delete this test and the mutation that guards it")
+  (is (not= (m/safe-rkey "原油") (m/safe-rkey "日本語"))
+      "differing lengths still differ, so the collision is length-bounded"))
+
+(deftest the-effect-envelope-is-not-caller-writable
+  ;; This one IS a guarantee, and it is the reason the hazard below is bounded.
+  ;; `:collection` comes from the spec and `:actor` from `actor-did`, neither
+  ;; of them from the caller's record, so the address an effect is written to
+  ;; cannot be redirected by its payload.
+  (let [spec (get m/cell-specs :cargo)
+        coll (first (:collections spec))
+        p    (m/cell-plan :cargo
+                          {:attestations all-attested
+                           :records {coll {:actorDid "did:web:attacker.example"
+                                           :$type "com.evil.thing"}}})
+        [e]  (:effects p)]
+    (is (= :ready (:status p)))
+    (is (= coll (:collection e)) "the effect still addresses the declared collection")
+    (is (= m/actor-did (:actor e)) "the effect is still attributed to this actor")
+    (is (= :mst/put-record (:op e)))))
+
+(deftest hazard-a-caller-supplied-record-overwrites-the-actor-stamp-in-the-body
+  ;; NOT a guarantee. `records-for` merges caller input LAST:
+  ;;   (merge {:$type coll} base (get input-records coll))
+  ;; so :actorDid, :$type, :scaffold and :constitutionalStatus -- the integrity
+  ;; markers the planner sets -- are all overwritable by the record body the
+  ;; caller passes in. The envelope is not (see the test above), but the body
+  ;; is what lands in the MST and is what a downstream reader reads.
+  ;;
+  ;; Fix direction (not taken here -- it changes the planner's contract):
+  ;; merge the caller's record FIRST, so `base` wins.
+  (let [coll (first (:collections (get m/cell-specs :cargo)))
+        body (:record (first (:records (m/cell-plan
+                                        :cargo
+                                        {:attestations all-attested
+                                         :records {coll {:actorDid "did:web:attacker.example"
+                                                         :$type "com.evil.thing"
+                                                         :scaffold false
+                                                         :constitutionalStatus "verified"}}}))))]
+    (is (= "did:web:attacker.example" (:actorDid body))
+        "the actor stamp is now protected -- delete this test and its mutation")
+    (is (= "com.evil.thing" (:$type body))
+        "$type is now protected -- delete this test and its mutation")
+    (is (false? (:scaffold body))
+        "the scaffold marker is now protected -- delete this test and its mutation")
+    (is (= "verified" (:constitutionalStatus body))
+        "constitutionalStatus is now protected -- delete this test and its mutation")))
 
 (deftest unknown-cells-are-refused-rather-than-planned
   (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
