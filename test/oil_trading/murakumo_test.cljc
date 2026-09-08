@@ -7,7 +7,7 @@
   derivation, the spec catalogue — is a way that invariant can be lost
   quietly, so each is pinned by name rather than by the aggregate outcome."
   (:require [clojure.test :refer [deftest is testing]]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [oil_trading.murakumo :as m]))
 
 (def all-attested
