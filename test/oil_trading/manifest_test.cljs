@@ -9,7 +9,7 @@
   the checks the TypeScript file could not make (manifest against cell-specs)
   are added, since that is the drift that actually breaks the actor."
   (:require [clojure.test :refer [deftest is testing]]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             ["node:fs" :as fs]
             ["node:path" :as path]
             [oil_trading.murakumo :as m]))
