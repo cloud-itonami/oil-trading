@@ -1,9 +1,9 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; run_tests.cljs — the whole suite, with a floor under what counts as a pass.
 ;;
 ;; Run it from the repo root:
 ;;
-;;   nbb --classpath src:test run_tests.cljs
+;;   kbb --backend sci --classpath src:test run_tests.cljs
 ;;
 ;; Three exit codes, because "everything I checked was fine" and "I checked
 ;; enough to say anything" are different claims (CLAUDE.md, ADR-2608136000):
