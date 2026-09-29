@@ -6,7 +6,7 @@
 ;;   kbb --backend sci --classpath src:test run_tests.cljs
 ;;
 ;; Three exit codes, because "everything I checked was fine" and "I checked
-;; enough to say anything" are different claims (CLAUDE.md, ADR-2608136000):
+;; enough to say anything" are different claims (AGENTS.md, ADR-2608136000):
 ;;
 ;;   0  every test ran and passed, and enough of them ran to mean something
 ;;   1  something failed
